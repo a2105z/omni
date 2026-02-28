@@ -1,0 +1,19 @@
+{
+  "name": "omni",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=omni-frontend",
+    "dev:frontend": "npm run dev --workspace=omni-frontend",
+    "dev:backend": "cd backend && python -m uvicorn app.main:app --reload",
+    "build": "npm run build --workspace=omni-frontend",
+    "build:frontend": "npm run build --workspace=omni-frontend",
+    "start": "npm run start --workspace=omni-frontend",
+    "lint": "npm run lint --workspace=omni-frontend",
+    "backend": "cd backend && uvicorn app.main:app --reload"
+  }
+}

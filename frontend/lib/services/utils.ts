@@ -1,0 +1,110 @@
+"use server";
+
+import { getGroqClient, getOpenAIClient } from "@/lib/ai/clients";
+import {
+  type DecisionSchema,
+  ZDecisionSchema,
+} from "@/lib/schemas/base";
+import { zodResponseFormat } from "openai/helpers/zod.mjs";
+
+export async function decision(
+  query: string,
+  constraint: string
+): Promise<boolean> {
+  try {
+    if (!process.env.GROQ_API_KEY) {
+      throw new Error("GROQ_API_KEY is not set");
+    }
+
+    const groqClient = getGroqClient();
+
+    const decisionWithReasoningResponse =
+      await groqClient.chat.completions.create({
+        model: "llama3-8b-8192",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a decision maker. You will be given a constraint and a query. You must decide if the query satisfies the constraint. Your response must be a brief explanation of your reasoning, followed by your decision.",
+          },
+          {
+            role: "user",
+            content: `Constraint: ${constraint}\n\nQuery: ${query}`,
+          },
+        ],
+      });
+
+    const decisionWithReasoning =
+      decisionWithReasoningResponse.choices[0].message.content;
+
+    if (!decisionWithReasoning) {
+      throw new Error("Failed to make decision with reasoning");
+    }
+
+    const response = await groqClient.chat.completions.create({
+      model: "llama3-8b-8192",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a decision maker. Given a decision you made about something, and a brief explanation of your reasoning, return a boolean value that represents the decision you made. Your response must be a JSON object with the following schema: { decision: boolean }",
+        },
+        {
+          role: "user",
+          content: `Decision: ${decisionWithReasoning}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    const parsed = JSON.parse(
+      response.choices[0].message.content ?? ""
+    ) as DecisionSchema;
+
+    return parsed.decision;
+  } catch (error) {
+    console.error(error);
+
+    const openaiClient = getOpenAIClient();
+    const response = await openaiClient.beta.chat.completions.parse({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a decision maker. You will be given a constraint and a query. You must decide if the query satisfies the constraint. Your response must be a JSON object with the following schema: { decision: boolean }",
+        },
+        {
+          role: "user",
+          content: `Constraint: ${constraint}\n\nQuery: ${query}`,
+        },
+      ],
+      response_format: zodResponseFormat(ZDecisionSchema, "decision"),
+    });
+
+    return response.choices[0].message.parsed?.decision ?? false;
+  }
+}
+
+export async function createSessionTitle(query: string): Promise<string> {
+  try {
+    const groqClient = getGroqClient();
+    const response = await groqClient.chat.completions.create({
+      model: "llama3-8b-8192",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a session title creator. You will be given a query. You must create a title for a session that is a single sentence using fewer than 8 words that captures the essence of the query.",
+        },
+        { role: "user", content: query },
+      ],
+    });
+
+    const title = response.choices[0].message.content;
+    return title?.replace(/^"|"$/g, "") ?? query;
+  } catch (error) {
+    console.error(error);
+    return query;
+  }
+}
