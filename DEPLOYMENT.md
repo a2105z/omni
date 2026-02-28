@@ -7,7 +7,8 @@
 2. **Import on Vercel**
    - Go to [vercel.com](https://vercel.com) → **Add New** → **Project**
    - Import your repository
-   - Vercel will auto-detect Next.js and use the `vercel.json` config (Root Directory: `frontend`)
+   - **Important:** Set **Root Directory** to `frontend` (click Edit next to it and enter `frontend`)
+   - Vercel will auto-detect Next.js
 
 3. **Add environment variables** (Vercel → Project → Settings → Environment Variables):
 
@@ -30,13 +31,10 @@
 
 ## Build Configuration
 
-The project uses `vercel.json` at the repo root:
+The project uses `vercel.json` at the repo root. **Set Root Directory to `frontend`** in Vercel project settings (the Next.js app lives there).
 
-- **Root Directory**: `frontend` (Next.js app lives here)
-- **Install**: `npm install --legacy-peer-deps` (runs from repo root)
-- **Build**: `npm run build` (runs `next build` in frontend)
-
-If you change the Root Directory in the Vercel dashboard, ensure it stays `frontend` or the build may fail.
+- **Install**: `npm install --legacy-peer-deps`
+- **Build**: `npm run build`
 
 ---
 
