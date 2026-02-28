@@ -10,44 +10,53 @@ export async function optimizeRawImageSearchQuery(
   query: string,
   numQueries: number = 3
 ): Promise<SearchResponse | null> {
-  if (!process.env.CEREBRAS_API_KEY) {
-    throw new Error("CEREBRAS_API_KEY is not set");
-  }
+  if (process.env.CEREBRAS_API_KEY) {
+    try {
+      const cerebrasClient = getCerebrasClient();
+      const response = await cerebrasClient.chat.completions.create({
+        model: "llama-3.3-70b",
+        messages: [
+          {
+            role: "system",
+            content: `Given a user search query, return the most optimized Google or Bing image search queries for this. Your response should be a JSON object with the following schema: {queries: string[]}. You should return ${numQueries} queries.`,
+          },
+          { role: "user", content: query },
+        ],
+        response_format: { type: "json_object" },
+      });
 
-  try {
-    const cerebrasClient = getCerebrasClient();
-    const response = await cerebrasClient.chat.completions.create({
-      model: "llama-3.3-70b",
-      messages: [
-        {
-          role: "system",
-          content: `Given a user search query, return the most optimized Google or Bing image search queries for this. Your response should be a JSON object with the following schema: {queries: string[]}. You should return ${numQueries} queries.`,
-        },
-        { role: "user", content: query },
-      ],
-      response_format: { type: "json_object" },
-    });
-
-    const searchResponse = JSON.parse(
-      (response.choices as ChatCompletion.Choice[])[0].message.content!
-    ) as SearchResponse;
-    searchResponse.queries = searchResponse.queries.map((q) => q.trim());
-    return searchResponse;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Generation cancelled");
+      const searchResponse = JSON.parse(
+        (response.choices as ChatCompletion.Choice[])[0].message.content!
+      ) as SearchResponse;
+      searchResponse.queries = searchResponse.queries.map((q) => q.trim());
+      return searchResponse;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("Generation cancelled");
+      }
+      console.error("Cerebras image query optimization failed:", error);
     }
-    console.error(error);
-
-    const openaiClient = getOpenAIClient();
-    const response = await openaiClient.beta.chat.completions.parse({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: query }],
-      response_format: zodResponseFormat(ZSearchResponse, "search_response"),
-    });
-
-    return response.choices[0].message.parsed;
   }
+
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const openaiClient = getOpenAIClient();
+      const response = await openaiClient.beta.chat.completions.parse({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: query }],
+        response_format: zodResponseFormat(ZSearchResponse, "search_response"),
+      });
+      return response.choices[0].message.parsed;
+    } catch (error) {
+      console.error("OpenAI image query optimization failed:", error);
+    }
+  }
+
+  if (process.env.BRAVE_API_KEY) {
+    return { queries: [query] };
+  }
+
+  return null;
 }
 
 export async function describeImage(

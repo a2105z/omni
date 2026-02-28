@@ -619,9 +619,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           : [];
 
       if (processedSearchResults.length === 0) {
+        const webError = webSearchResult.status === "rejected" ? webSearchResult.reason : null;
+        let errorMsg = "I was unable to find any relevant information.";
+        if (webError) {
+          const msg = String(webError?.message || webError);
+          if (msg.includes("CEREBRAS_API_KEY")) {
+            errorMsg = "Search failed: CEREBRAS_API_KEY is not configured. Please add it to your Vercel environment variables.";
+          } else if (msg.includes("BRAVE_API_KEY")) {
+            errorMsg = "Search failed: BRAVE_API_KEY is not configured. Please add it to your Vercel environment variables.";
+          } else if (msg.includes("OPENAI_API_KEY")) {
+            errorMsg = "Search failed: OPENAI_API_KEY is not configured. Please add it to your Vercel environment variables.";
+          } else if (msg.includes("GROQ_API_KEY")) {
+            errorMsg = "Search failed: GROQ_API_KEY is not configured. Please add it to your Vercel environment variables.";
+          } else {
+            errorMsg = `Search failed: ${msg}`;
+          }
+        }
         updateLatestAssistantMessage({
           isDoneGeneratingFinalAnswer: true,
-          finalAnswer: "I was unable to find any relevant information.",
+          finalAnswer: errorMsg,
+          error: webError ? String(webError?.message || webError) : undefined,
         });
         return;
       }

@@ -20,44 +20,58 @@ export async function optimizeRawSearchQuery(
   query: string,
   numQueries: number = 3
 ): Promise<SearchResponse | null> {
-  if (!process.env.CEREBRAS_API_KEY) {
-    throw new Error("CEREBRAS_API_KEY is not set");
-  }
+  // Try Cerebras first
+  if (process.env.CEREBRAS_API_KEY) {
+    try {
+      const cerebrasClient = getCerebrasClient();
+      const response = await cerebrasClient.chat.completions.create({
+        model: "llama-3.1-8b",
+        messages: [
+          {
+            role: "system",
+            content: `Given a user search query, return the most optimized Google or Bing search queries for this. Your response should be a JSON object with the following schema: {queries: string[]}. You should return ${numQueries} queries.`,
+          },
+          { role: "user", content: query },
+        ],
+        response_format: { type: "json_object" },
+      });
 
-  try {
-    const cerebrasClient = getCerebrasClient();
-    const response = await cerebrasClient.chat.completions.create({
-      model: "llama-3.1-8b",
-      messages: [
-        {
-          role: "system",
-          content: `Given a user search query, return the most optimized Google or Bing search queries for this. Your response should be a JSON object with the following schema: {queries: string[]}. You should return ${numQueries} queries.`,
-        },
-        { role: "user", content: query },
-      ],
-      response_format: { type: "json_object" },
-    });
-
-    const searchResponse = JSON.parse(
-      (response.choices as ChatCompletion.Choice[])[0].message.content!
-    ) as SearchResponse;
-    searchResponse.queries = searchResponse.queries.map((q) => q.trim());
-    return searchResponse;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Generation cancelled");
+      const searchResponse = JSON.parse(
+        (response.choices as ChatCompletion.Choice[])[0].message.content!
+      ) as SearchResponse;
+      searchResponse.queries = searchResponse.queries.map((q) => q.trim());
+      return searchResponse;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("Generation cancelled");
+      }
+      console.error("Cerebras query optimization failed:", error);
     }
-    console.error(error);
-
-    const openaiClient = getOpenAIClient();
-    const response = await openaiClient.beta.chat.completions.parse({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: query }],
-      response_format: zodResponseFormat(ZSearchResponse, "search_response"),
-    });
-
-    return response.choices[0].message.parsed;
   }
+
+  // Try OpenAI fallback
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const openaiClient = getOpenAIClient();
+      const response = await openaiClient.beta.chat.completions.parse({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: query }],
+        response_format: zodResponseFormat(ZSearchResponse, "search_response"),
+      });
+      return response.choices[0].message.parsed;
+    } catch (error) {
+      console.error("OpenAI query optimization failed:", error);
+    }
+  }
+
+  // Final fallback: use raw query directly so search can still proceed
+  if (process.env.BRAVE_API_KEY) {
+    return { queries: [query] };
+  }
+
+  throw new Error(
+    "No API keys configured. Set BRAVE_API_KEY plus at least one of CEREBRAS_API_KEY or OPENAI_API_KEY in your environment variables."
+  );
 }
 
 export async function webscrape(url: string): Promise<string | null> {
@@ -220,6 +234,38 @@ export async function* getStreamedFinalAnswer(
     )
     .join("\n\n");
 
+  if (!process.env.OPENAI_API_KEY) {
+    if (process.env.GROQ_API_KEY) {
+      const groqClient = getGroqClient();
+      const stream = await groqClient.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          {
+            role: "system",
+            content: `You are a helpful assistant. Answer the user's question using the provided sources. Cite sources using [number](url) format.`,
+          },
+          {
+            role: "user",
+            content: `Question: ${query}${
+              sourceContext ? `\n\nSources:\n${sourceContext}` : ""
+            }${imageSourceContext ? `\n\nImages:\n${imageSourceContext}` : ""}`,
+          },
+        ],
+        stream: true,
+      });
+      try {
+        for await (const chunk of stream) {
+          yield chunk.choices[0].delta.content;
+        }
+      } catch (error) {
+        console.error("Groq stream error:", error);
+        throw error;
+      }
+      return;
+    }
+    throw new Error("OPENAI_API_KEY is not set and no fallback available. Add it to your Vercel environment variables.");
+  }
+
   const openaiClient = getOpenAIClient();
   const stream = await openaiClient.chat.completions.create({
     model: "gpt-4o-mini",
@@ -326,27 +372,36 @@ export async function generateFollowUpSearchQueries(
   } catch (error) {
     console.error("Error in generateFollowUpSearchQueries:", error);
 
-    const openaiClient = getOpenAIClient();
-    const response = await openaiClient.beta.chat.completions.parse({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a helpful assistant that generates follow-up search queries based on a list of enhanced queries and a previous model response. Your response should be a JSON object with the following schema: {queries: string[]}. You should return ${numQueries} queries.`,
-        },
-        {
-          role: "user",
-          content: `Enhanced Queries:\n${enhancedQueries.join(
-            "\n"
-          )}\n\nPrevious Model Response:\n${previousModelResponse}`,
-        },
-      ],
-      response_format: zodResponseFormat(
-        ZFollowUpSearchQueriesResponse,
-        "follow_up_search_queries_response"
-      ),
-    });
+    if (!process.env.OPENAI_API_KEY) {
+      return null;
+    }
 
-    return response.choices[0].message.parsed;
+    try {
+      const openaiClient = getOpenAIClient();
+      const response = await openaiClient.beta.chat.completions.parse({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a helpful assistant that generates follow-up search queries based on a list of enhanced queries and a previous model response. Your response should be a JSON object with the following schema: {queries: string[]}. You should return ${numQueries} queries.`,
+          },
+          {
+            role: "user",
+            content: `Enhanced Queries:\n${enhancedQueries.join(
+              "\n"
+            )}\n\nPrevious Model Response:\n${previousModelResponse}`,
+          },
+        ],
+        response_format: zodResponseFormat(
+          ZFollowUpSearchQueriesResponse,
+          "follow_up_search_queries_response"
+        ),
+      });
+
+      return response.choices[0].message.parsed;
+    } catch (fallbackError) {
+      console.error("OpenAI follow-up generation also failed:", fallbackError);
+      return null;
+    }
   }
 }
